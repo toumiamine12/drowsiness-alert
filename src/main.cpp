@@ -2,6 +2,8 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -52,6 +54,45 @@ void drawBanner(cv::Mat& img, const std::string& text, cv::Scalar bg) {
                 cv::FONT_HERSHEY_DUPLEX, 1.6, cv::Scalar(255, 255, 255), 3);
 }
 
+struct Camera {
+    int id;  // N in /dev/videoN
+    std::string name;
+};
+
+// Real capture devices only: a webcam also exposes a metadata node (sysfs index != 0).
+std::vector<Camera> listCameras() {
+    std::vector<Camera> cams;
+    std::error_code ec;
+    for (const auto& dev : std::filesystem::directory_iterator("/sys/class/video4linux", ec)) {
+        const std::string node = dev.path().filename();  // "video2"
+        int index = -1;
+        std::string name;
+        std::ifstream(dev.path() / "index") >> index;
+        std::getline(std::ifstream(dev.path() / "name"), name);
+        if (index == 0 && node.rfind("video", 0) == 0) cams.push_back({std::stoi(node.substr(5)), name});
+    }
+    std::sort(cams.begin(), cams.end(), [](const Camera& a, const Camera& b) { return a.id < b.id; });
+    return cams;
+}
+
+// Clickable "camera" button drawn on the frame (HighGUI has no native buttons).
+struct CameraButton {
+    cv::Rect rect;
+    bool clicked = false;
+};
+
+void onMouse(int event, int x, int y, int /*flags*/, void* userdata) {
+    auto* button = static_cast<CameraButton*>(userdata);
+    if (event == cv::EVENT_LBUTTONDOWN && button->rect.contains(cv::Point(x, y))) button->clicked = true;
+}
+
+void drawButton(cv::Mat& img, cv::Rect r, const std::string& text) {
+    cv::rectangle(img, r, cv::Scalar(60, 60, 60), cv::FILLED);
+    cv::rectangle(img, r, cv::Scalar(255, 255, 255), 1);
+    cv::putText(img, text, r.tl() + cv::Point(8, r.height - 11), cv::FONT_HERSHEY_SIMPLEX, 0.5,
+                cv::Scalar(255, 255, 255), 1);
+}
+
 }  // namespace
 
 int main() {
@@ -60,9 +101,11 @@ int main() {
         !loadCascade(eyeCascade, "haarcascade_eye.xml"))
         return 1;
 
-    cv::VideoCapture cap(0, cv::CAP_V4L2);
+    std::vector<Camera> cams = listCameras();
+    Camera cam = cams.empty() ? Camera{0, "camera 0"} : cams.front();
+    cv::VideoCapture cap(cam.id, cv::CAP_V4L2);
     if (!cap.isOpened()) {
-        std::cerr << "Cannot open webcam (device 0)\n";
+        std::cerr << "Cannot open webcam (/dev/video" << cam.id << ")\n";
         return 1;
     }
 
@@ -73,11 +116,38 @@ int main() {
     auto calibStart = Clock::now(), lastTick = Clock::now(), lastBeep = Clock::time_point{};
     double fps = 0;
     int emptyRun = 0;
+    CameraButton button;
+
+    auto startCalibration = [&] {
+        calibrating = true;
+        calibSamples.clear();
+        calibStart = Clock::now();
+        counter = ClosedCounter(kClosedFrames);
+        alert = false;
+    };
 
     cv::namedWindow(kMainWindow, cv::WINDOW_NORMAL | cv::WINDOW_KEEPRATIO);
     cv::resizeWindow(kMainWindow, 1280, 960);
+    cv::setMouseCallback(kMainWindow, onMouse, &button);
 
     while (true) {
+        if (button.clicked) {
+            // Next camera in the list (re-read so a newly plugged-in camera shows up)
+            button.clicked = false;
+            cams = listCameras();
+            auto it = std::find_if(cams.begin(), cams.end(), [&](const Camera& c) { return c.id > cam.id; });
+            const Camera next = it != cams.end() ? *it : cams.empty() ? cam : cams.front();
+            if (next.id != cam.id) {
+                if (cap.open(next.id, cv::CAP_V4L2)) {
+                    cam = next;
+                    startCalibration();  // new camera, new lighting and angle
+                } else {
+                    std::cerr << "Cannot open /dev/video" << next.id << ", staying on " << cam.name << "\n";
+                    cap.open(cam.id, cv::CAP_V4L2);
+                }
+            }
+        }
+
         cv::Mat frame;
         cap.read(frame);
         if (frame.empty()) {
@@ -166,6 +236,8 @@ int main() {
             }
         }
 
+        button.rect = cv::Rect(frame.cols - 230, 10, 220, 30);
+        drawButton(frame, button.rect, "Camera: " + cam.name.substr(0, 20) + " >");
         cv::imshow(kMainWindow, frame);
         if (debug) {
             cv::imshow("equalized", gray);
@@ -181,13 +253,7 @@ int main() {
         } catch (const cv::Exception&) {
             break;
         }
-        if (key == 'c' || key == 'C') {
-            calibrating = true;
-            calibSamples.clear();
-            calibStart = now;
-            counter = ClosedCounter(kClosedFrames);
-            alert = false;
-        }
+        if (key == 'c' || key == 'C') startCalibration();
         if (key == 'd' || key == 'D') {
             debug = !debug;
             if (!debug)
