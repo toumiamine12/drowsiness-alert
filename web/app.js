@@ -244,6 +244,14 @@ function processFrame(now) {
                 eyeCascade.detectMultiScale(eyeEq, found, 1.1, 6, 0,
                                             new cv.Size(EYE_W / 8, EYE_W / 8), new cv.Size(EYE_W / 2, EYE_W / 2));
                 for (let i = 0; i < found.size(); i++) eyes.push(cropToFrame(found.get(i), face, EYE_W, EYE_H));
+                if (debug) {  // draw what the algorithm sees onto the eye crop shown in the debug view
+                    eyeCtx.lineWidth = 2;
+                    eyeCtx.strokeStyle = "#0f0";
+                    for (let i = 0; i < found.size(); i++) {
+                        const e = found.get(i);
+                        eyeCtx.strokeRect(e.x, e.y, e.width, e.height);
+                    }
+                }
 
                 // Thresholding on the raw crop: equalizing a small crop flattens its histogram, which would make
                 // the dark ratio the same for open and closed eyes. The level is relative to the crop's brightness.
@@ -251,6 +259,10 @@ function processFrame(now) {
                                          Math.round(EYE_BAND.width * EYE_W), Math.round(EYE_BAND.height * EYE_H));
                 const bandMat = keep(keep(eyeGray.roi(band)).clone());  // ROI isn't continuous; clone for .data
                 ratio = darkRatio(bandMat.data, cv.mean(eyeGray)[0] * DARK_FRACTION);
+                if (debug) {
+                    eyeCtx.strokeStyle = "#ff0";
+                    eyeCtx.strokeRect(band.x, band.y, band.width, band.height);
+                }
             }
         }
     } finally {
@@ -312,7 +324,15 @@ function render(state, face, eyes, ratio, tooDark, now) {
     }
 
     $("debug").hidden = !debug;
-    if (debug) $("debug").textContent = `ratio ${ratio.toFixed(3)} / thr ${thr.toFixed(3)} · ${fps.toFixed(0)} fps`;
+    $("eyeView").hidden = !debug;
+    if (debug) {
+        // Which signal says "closed": the eye cascade (no eyes found) and/or the dark ratio (below thr)
+        const byEyes = face && eyes.length === 0, byRatio = face && !calibrating && ratio < thr;
+        const closedBy = !face ? "-" : byEyes && byRatio ? "eyes+ratio" : byEyes ? "eyes" : byRatio ? "ratio" : "none";
+        $("debug").textContent = `face ${face ? face.width : 0}px · eyes ${eyes.length} · ratio ${ratio.toFixed(3)} / thr ${thr.toFixed(3)}`
+            + ` · closed by: ${closedBy} · ${fps.toFixed(0)} fps`;
+        if (face) $("eyeView").getContext("2d").drawImage(eyeCanvas, 0, 0);
+    }
 }
 
 // ---------- Wiring ----------
