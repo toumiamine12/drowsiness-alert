@@ -9,6 +9,7 @@ const CLOSED_MS = 800;           // eyes closed this long -> alert
 const TOO_DARK_MEAN = 40;        // mean gray below this: the camera can't see the face
 const CALIB_MS = 3000;
 const CALIB_MIN_SAMPLES = 30;
+const MAX_FAILURES = 30;         // frames failing in a row (~1-2 s) before we stop trusting the tracker
 
 const COLORS = {
     "CALIBRATING": "#1c6ed6",
@@ -24,7 +25,8 @@ const video = $("video"), view = $("view"), ctx = view.getContext("2d");
 const tiny = Object.assign(document.createElement("canvas"), { width: 64, height: 48 });  // brightness check
 const tinyCtx = tiny.getContext("2d", { willReadFrequently: true });
 
-let landmarker;
+let landmarker, createLandmarker, delegate;
+let failures = 0, rebuilding = false;
 let stream = null, running = false;
 const timer = new ClosedTimer(CLOSED_MS);
 let alert = false, calibrating = false, calibStart = 0, calibSamples = [], thr = 0;
@@ -43,16 +45,39 @@ async function loadLandmarker() {
     // Dynamic import, so a failed download shows an error instead of a page stuck on "Loading…"
     const { FilesetResolver, FaceLandmarker } = await import("./mediapipe/vision_bundle.mjs");
     const fileset = await FilesetResolver.forVisionTasks("mediapipe/wasm");
-    const create = (delegate) => FaceLandmarker.createFromOptions(fileset, {
-        baseOptions: { modelAssetPath: "mediapipe/face_landmarker.task", delegate },
-        runningMode: "VIDEO",
-        numFaces: 1,
-    });
+    createLandmarker = async (d) => {
+        landmarker = await FaceLandmarker.createFromOptions(fileset, {
+            baseOptions: { modelAssetPath: "mediapipe/face_landmarker.task", delegate: d },
+            runningMode: "VIDEO",
+            numFaces: 1,
+        });
+        delegate = d;
+    };
     try {
-        landmarker = await create("GPU");
+        await createLandmarker("GPU");
     } catch {
-        landmarker = await create("CPU");  // some phones have no usable WebGL for MediaPipe
+        await createLandmarker("CPU");  // some phones have no usable WebGL for MediaPipe
     }
+}
+
+// The tracker keeps failing: never leave the driver looking at a frozen "AWAKE". On some phones the GPU
+// version loads but fails on every frame, so rebuild once on the CPU; if that fails too, stop and say so.
+async function recoverFromFailures() {
+    failures = 0;
+    if (delegate === "GPU") {
+        rebuilding = true;
+        try {
+            landmarker.close();
+            await createLandmarker("CPU");
+            return;
+        } catch {
+            // fall through to stopping
+        } finally {
+            rebuilding = false;
+        }
+    }
+    stop();
+    showError("Face tracking stopped working on this device. Tap Retry, or try another browser.", true);
 }
 
 // ---------- Alarm and wake lock ----------
@@ -184,12 +209,14 @@ function loop(now) {
     if (!running) return;
     requestAnimationFrame(loop);  // first, so one bad frame can't stop detection
     // Only process new camera frames; the screen refreshes faster than the camera on most phones
-    if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+    if (!rebuilding && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
         lastVideoTime = video.currentTime;
         try {
             processFrame(now);
+            failures = 0;
         } catch (e) {
             console.error("frame skipped:", e);
+            if (++failures >= MAX_FAILURES) recoverFromFailures();
         }
     }
 }
