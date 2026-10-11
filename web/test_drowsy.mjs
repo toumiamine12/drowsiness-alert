@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { ClosedTimer, darkRatio, calibratedThreshold } from "./drowsy.js";
+import { ClosedTimer, darkRatio, calibratedThreshold, eyeCropSource, cropToFrame, EYE_BAND } from "./drowsy.js";
 
 function alertsAt800ms() {
     const t = new ClosedTimer(800);
@@ -68,6 +68,24 @@ function calibratedThresholdMedian() {
     assert.equal(calibratedThreshold([]), 0);
 }
 
+function eyeCropMapsToFullResolution() {
+    // Face found at (100,50) 80x80 on the 320 px frame; the camera frame is 4x larger
+    assert.deepEqual(eyeCropSource({ x: 100, y: 50, width: 80, height: 80 }, 4),
+                     { x: 400, y: 200, width: 320, height: 160 });  // upper half of the face
+}
+
+function cropPointsMapBackToFrame() {
+    // A box found in the 240x120 crop of that face maps back onto the 320 px frame
+    const face = { x: 100, y: 50, width: 80, height: 80 };
+    assert.deepEqual(cropToFrame({ x: 120, y: 60, width: 60, height: 30 }, face, 240, 120),
+                     { x: 140, y: 70, width: 20, height: 10 });
+}
+
+function eyeBandIsFaceRows20to50() {
+    // The crop covers face rows 0-50 %, so face rows 20-50 % are crop rows 40-100 %; inner 70 % of width
+    assert.deepEqual(EYE_BAND, { x: 0.15, y: 0.4, width: 0.7, height: 0.6 });
+}
+
 alertsAt800ms();
 noAlertAt799ms();
 openFrameResets();
@@ -78,4 +96,7 @@ blinkThenFaceLostDoesNotAlert();
 backwardsTimeIgnored();
 darkRatioCounts();
 calibratedThresholdMedian();
+eyeCropMapsToFullResolution();
+cropPointsMapBackToFrame();
+eyeBandIsFaceRows20to50();
 console.log("all tests passed");

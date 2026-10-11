@@ -50,3 +50,32 @@ export function calibratedThreshold(samples, factor = 0.6) {
     const sorted = [...samples].sort((a, b) => a - b);
     return sorted[Math.floor(sorted.length / 2)] * factor;
 }
+
+// ---------- Eye crop geometry (two-resolution ROI) ----------
+// The face is found on a small frame (fast). The eye region is then cut from the full-resolution
+// camera frame and scaled to a fixed size, so the eyes stay well above the eye cascade's 20x20 px
+// window however far away the phone is mounted.
+
+// Eye ROI = upper half of the face, in full-resolution pixels (scale = camera width / small width).
+export function eyeCropSource(face, scale) {
+    return {
+        x: Math.round(face.x * scale),
+        y: Math.round(face.y * scale),
+        width: Math.round(face.width * scale),
+        height: Math.round(face.height / 2 * scale),
+    };
+}
+
+// A box found in the cropW x cropH eye crop, mapped back onto the small frame for drawing.
+export function cropToFrame(box, face, cropW, cropH) {
+    const sx = face.width / cropW, sy = face.height / 2 / cropH;
+    return {
+        x: Math.round(face.x + box.x * sx),
+        y: Math.round(face.y + box.y * sy),
+        width: Math.round(box.width * sx),
+        height: Math.round(box.height * sy),
+    };
+}
+
+// Eye band for the dark ratio as fractions of the crop: face rows 20-50 %, inner 70 % of width.
+export const EYE_BAND = { x: 0.15, y: 0.4, width: 0.7, height: 0.6 };

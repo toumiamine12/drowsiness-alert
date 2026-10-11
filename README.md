@@ -147,7 +147,8 @@ Tap the state label to show the debug line (dark ratio, threshold, fps).
 | Stage 1 (desktop) | Stage 2 (phone) | Why |
 |---|---|---|
 | `ClosedCounter`: 15 consecutive frames | `ClosedTimer`: closed ≥ 800 ms | phone frame rates vary; this is still temporal filtering |
-| full 640×480 frame | downscaled to 320 px wide | keeps ≥ 15 fps on phone CPUs |
+| one 640×480 frame for everything | **two-resolution ROI**: face found on a 320 px frame, eye region cut from the full-resolution (1280 px) frame and scaled to a fixed 240×120 | fast face search, and the eyes stay above the eye cascade's 20×20 px window even with the phone mounted far away |
+| dark pixel = gray < 50 after global `equalizeHist` | dark pixel = gray < 0.5 × crop mean, on the raw crop (equalization only for the eye cascade) | equalizing a small crop flattens its histogram, so the dark ratio would be the same for open and closed eyes |
 | — | TOO DARK state when mean gray < 40 | at night, classic CV can't see the face, so it says so instead of failing silently |
 | — | Screen Wake Lock | the phone must not lock while driving |
 | `paplay` WAV | Web Audio square wave, plus vibration on Android | no audio files; plays even with the iPhone ringer switch on silent |

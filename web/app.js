@@ -1,10 +1,12 @@
 // Stage 2: the desktop pipeline (src/main.cpp) running in the phone browser with OpenCV.js.
-import { ClosedTimer, darkRatio, calibratedThreshold } from "./drowsy.js";
+import { ClosedTimer, darkRatio, calibratedThreshold, eyeCropSource, cropToFrame, EYE_BAND } from "./drowsy.js";
 
 // Tuning knobs (same values as the desktop app where they exist)
-const PROC_WIDTH = 320;          // processing width; keeps >= 15 fps on phone CPUs
+const PROC_WIDTH = 320;          // face detection width; keeps >= 15 fps on phone CPUs
+const EYE_W = 240, EYE_H = 120;  // fixed eye-crop size cut from the full-resolution frame
+const MIN_FACE = 40;             // px on the 320 px frame; ~1 m from the camera
 const CLOSED_MS = 800;           // eyes closed this long -> alert
-const PIXEL_THR = 50;            // dark-pixel level after equalizeHist
+const DARK_FRACTION = 0.5;       // ponytail: dark = below half the crop's mean brightness; tune if open/closed ratios sit too close
 const TOO_DARK_MEAN = 40;        // mean gray below this: the camera can't see the face
 const CALIB_MS = 3000;
 const CALIB_MIN_SAMPLES = 30;
@@ -20,6 +22,8 @@ const COLORS = {
 
 const $ = (id) => document.getElementById(id);
 const video = $("video"), view = $("view"), ctx = view.getContext("2d", { willReadFrequently: true });
+const eyeCanvas = Object.assign(document.createElement("canvas"), { width: EYE_W, height: EYE_H });
+const eyeCtx = eyeCanvas.getContext("2d", { willReadFrequently: true });
 
 let cv, faceCascade, eyeCascade;
 let stream = null, running = false;
@@ -126,7 +130,7 @@ async function start() {
     setupAudio();  // must happen inside the tap, before any await
     try {
         stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: "user", width: { ideal: 640 } },
+            video: { facingMode: "user", width: { ideal: 1280 } },  // real pixels for a distant face
             audio: false,
         });
     } catch (e) {
@@ -219,29 +223,34 @@ function processFrame(now) {
 
             // Haar cascade: keep the largest face
             const faces = keep(new cv.RectVector());
-            faceCascade.detectMultiScale(eq, faces, 1.1, 5, 0, new cv.Size(60, 60), new cv.Size(0, 0));
+            faceCascade.detectMultiScale(eq, faces, 1.1, 5, 0, new cv.Size(MIN_FACE, MIN_FACE), new cv.Size(0, 0));
             for (let i = 0; i < faces.size(); i++) {
                 const f = faces.get(i);
                 if (!face || f.width * f.height > face.width * face.height) face = f;
             }
 
             if (face) {
-                // ROI: eyes are only searched in the upper half of the face
-                const eyeRect = new cv.Rect(face.x, face.y, face.width, Math.floor(face.height / 2));
-                const eyeRoi = keep(eq.roi(eyeRect));
-                const found = keep(new cv.RectVector());
-                const minEye = Math.floor(face.width / 8);
-                eyeCascade.detectMultiScale(eyeRoi, found, 1.1, 6, 0, new cv.Size(minEye, minEye), new cv.Size(0, 0));
-                for (let i = 0; i < found.size(); i++) {
-                    const e = found.get(i);
-                    eyes.push({ x: e.x + face.x, y: e.y + face.y, width: e.width, height: e.height });
-                }
+                // ROI at full resolution: cut the upper half of the face out of the camera frame and
+                // scale it to a fixed size, so the eyes stay above the eye cascade's 20x20 px window at any distance
+                const src = eyeCropSource(face, video.videoWidth / w);
+                eyeCtx.drawImage(video, src.x, src.y, src.width, src.height, 0, 0, EYE_W, EYE_H);
+                const eyeGray = keep(new cv.Mat());
+                cv.cvtColor(keep(cv.imread(eyeCanvas)), eyeGray, cv.COLOR_RGBA2GRAY);
 
-                // Thresholding: dark-pixel ratio of the eye band (rows 20-50 %, inner 70 % of width)
-                const band = new cv.Rect(face.x + Math.floor(face.width * 0.15), face.y + Math.floor(face.height * 0.2),
-                                         Math.floor(face.width * 0.7), Math.floor(face.height * 0.3));
-                const bandMat = keep(keep(eq.roi(band)).clone());  // ROI isn't continuous; clone for .data
-                ratio = darkRatio(bandMat.data, PIXEL_THR);
+                // Histogram equalization of the crop, for the eye cascade only
+                const eyeEq = keep(new cv.Mat());
+                cv.equalizeHist(eyeGray, eyeEq);
+                const found = keep(new cv.RectVector());
+                eyeCascade.detectMultiScale(eyeEq, found, 1.1, 6, 0,
+                                            new cv.Size(EYE_W / 8, EYE_W / 8), new cv.Size(EYE_W / 2, EYE_W / 2));
+                for (let i = 0; i < found.size(); i++) eyes.push(cropToFrame(found.get(i), face, EYE_W, EYE_H));
+
+                // Thresholding on the raw crop: equalizing a small crop flattens its histogram, which would make
+                // the dark ratio the same for open and closed eyes. The level is relative to the crop's brightness.
+                const band = new cv.Rect(Math.round(EYE_BAND.x * EYE_W), Math.round(EYE_BAND.y * EYE_H),
+                                         Math.round(EYE_BAND.width * EYE_W), Math.round(EYE_BAND.height * EYE_H));
+                const bandMat = keep(keep(eyeGray.roi(band)).clone());  // ROI isn't continuous; clone for .data
+                ratio = darkRatio(bandMat.data, cv.mean(eyeGray)[0] * DARK_FRACTION);
             }
         }
     } finally {
