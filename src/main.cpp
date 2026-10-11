@@ -28,7 +28,7 @@ constexpr int kPixelThr = 50;            // ponytail: fixed dark-pixel level aft
 constexpr double kCalibSeconds = 3.0;
 constexpr size_t kCalibMinSamples = 30;
 constexpr int kMaxEmptyFrames = 30;      // give up if the camera stops delivering
-constexpr double kSirenSeconds = 0.6;    // one siren clip; replayed back to back while alerting
+constexpr double kSirenSeconds = 0.6;    // one alarm clip; replayed back to back while alerting
 
 const std::string kCascadeDir = "/usr/share/opencv4/haarcascades/";
 const char* const kMainWindow = "drowsiness-alert";
@@ -38,17 +38,17 @@ const char* const kDebugWindows[] = {"equalized", "eye ROI", "eye band threshold
 const cv::Scalar kGreen(80, 200, 80), kOrange(0, 165, 255), kRed(0, 0, 255), kBlue(230, 160, 40),
     kGray(160, 160, 160), kWhite(255, 255, 255), kBlack(0, 0, 0);
 
-// Two-tone siren (960/1280 Hz, 4 x 150 ms) as a 16-bit mono WAV, so no sound asset is needed.
+// Smoke-alarm pulse (4 x 90 ms beeps at 3.1 kHz, 60 ms gaps) as a 16-bit mono WAV,
+// so no sound asset is needed.
 bool writeSiren(const std::string& path) {
     constexpr int rate = 22050;
-    const int n = static_cast<int>(rate * kSirenSeconds), seg = n / 4, fade = rate / 200;
+    const int n = static_cast<int>(rate * kSirenSeconds), seg = n / 4, beep = seg * 3 / 5, fade = rate / 200;
     std::vector<int16_t> pcm(n);
     for (int i = 0; i < n; ++i) {
-        const double f = (i / seg) % 2 ? 1280 : 960, t = double(i) / rate;
         const int k = i % seg;
-        const double env = std::min({1.0, double(k) / fade, double(seg - k) / fade});  // no clicks
-        const double s = std::sin(2 * M_PI * f * t) + 0.3 * std::sin(6 * M_PI * f * t);  // harsher
-        pcm[i] = static_cast<int16_t>(0.75 * 32767 * env * s / 1.3);
+        if (k >= beep) continue;  // gap between beeps
+        const double env = std::min({1.0, double(k) / fade, double(beep - k) / fade});  // no clicks
+        pcm[i] = static_cast<int16_t>(0.75 * 32767 * env * std::sin(2 * M_PI * 3100 * i / rate));
     }
     auto u32 = [](std::ofstream& o, uint32_t v) { o.write(reinterpret_cast<char*>(&v), 4); };
     auto u16 = [](std::ofstream& o, uint16_t v) { o.write(reinterpret_cast<char*>(&v), 2); };
