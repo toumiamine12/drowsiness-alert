@@ -26,6 +26,7 @@ let stream = null, running = false;
 const timer = new ClosedTimer(CLOSED_MS);
 let alert = false, calibrating = false, calibStart = 0, calibSamples = [], thr = 0;
 let fps = 0, lastFrame = 0, lastVideoTime = -1, debug = false;
+let audio = null, gain = null, alarmTimer = null, vibrateTimer = null, wakeLock = null;
 
 // ---------- Loading OpenCV.js and the cascades ----------
 
@@ -58,10 +59,63 @@ async function loadOpenCv() {
     eyeCascade = await load("haarcascade_eye.xml");
 }
 
+// ---------- Alarm and wake lock ----------
+
+// Rapid beep, same as the desktop app: 2 kHz square wave, 70 ms on / 50 ms off.
+// One oscillator runs all the time; the alarm only opens and closes its gain.
+function setupAudio() {
+    if (audio) return audio.resume();
+    // iPhone: "playback" keeps the alarm audible even with the ringer switch on silent
+    if (navigator.audioSession) navigator.audioSession.type = "playback";
+    audio = new AudioContext();
+    const osc = audio.createOscillator();
+    osc.type = "square";
+    osc.frequency.value = 2000;
+    gain = audio.createGain();
+    gain.gain.value = 0;
+    osc.connect(gain).connect(audio.destination);
+    osc.start();
+}
+
+function startAlarm() {
+    if (alarmTimer) return;
+    const beep = () => {
+        const t = audio.currentTime;
+        gain.gain.setValueAtTime(0.9, t);
+        gain.gain.setValueAtTime(0, t + 0.07);
+    };
+    beep();
+    alarmTimer = setInterval(beep, 120);
+    if (navigator.vibrate) {  // Android only; iPhone browsers can't vibrate
+        navigator.vibrate([200, 100]);
+        vibrateTimer = setInterval(() => navigator.vibrate([200, 100]), 300);
+    }
+}
+
+function stopAlarm() {
+    if (!alarmTimer) return;
+    clearInterval(alarmTimer);
+    clearInterval(vibrateTimer);
+    alarmTimer = vibrateTimer = null;
+    gain.gain.cancelScheduledValues(audio.currentTime);
+    gain.gain.setValueAtTime(0, audio.currentTime);
+    navigator.vibrate?.(0);
+}
+
+async function requestWakeLock() {
+    try {
+        wakeLock = await navigator.wakeLock.request("screen");
+        $("lockHint").hidden = true;
+    } catch {
+        $("lockHint").hidden = false;  // unsupported or refused
+    }
+}
+
 // ---------- Start / stop ----------
 
 async function start() {
     $("error").hidden = true;
+    setupAudio();  // must happen inside the tap, before any await
     try {
         stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: "user", width: { ideal: 640 } },
@@ -78,12 +132,16 @@ async function start() {
     $("start").hidden = true;
     $("drive").hidden = false;
     running = true;
+    requestWakeLock();
     startCalibration();
     requestAnimationFrame(loop);
 }
 
 function stop() {
     running = false;
+    stopAlarm();
+    wakeLock?.release();
+    wakeLock = null;
     stream?.getTracks().forEach((t) => t.stop());
     stream = null;
     document.body.classList.remove("alert");
@@ -192,6 +250,8 @@ function processFrame(now) {
 function render(state, face, eyes, ratio, tooDark, now) {
     document.body.style.backgroundColor = COLORS[state];
     document.body.classList.toggle("alert", state === "WAKE UP!");
+    if (state === "WAKE UP!") startAlarm();
+    else stopAlarm();
     $("label").textContent = state;
 
     let hint = "";
@@ -224,6 +284,20 @@ $("stopBtn").addEventListener("click", stop);
 $("recalBtn").addEventListener("click", startCalibration);
 $("label").addEventListener("click", () => (debug = !debug));
 $("retryBtn").addEventListener("click", () => location.reload());
+
+// The browser pauses the camera loop when the page is hidden: silence the alarm, and on return
+// pick up again (the wake lock is released automatically when hidden).
+document.addEventListener("visibilitychange", () => {
+    if (!running) return;
+    if (document.hidden) {
+        stopAlarm();
+        timer.reset();
+        alert = false;
+    } else {
+        audio.resume();
+        requestWakeLock();
+    }
+});
 
 if (!navigator.mediaDevices?.getUserMedia) {
     showError("This browser can't use the camera here. Open the page over HTTPS in Safari or Chrome.");

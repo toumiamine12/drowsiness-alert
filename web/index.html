@@ -46,6 +46,7 @@
   }
   #bar { height: 14px; border-radius: 7px; background: rgba(0, 0, 0, 0.35); overflow: hidden; }
   #bar > div { height: 100%; width: 0; background: #fff; }
+  #lockHint { margin: 0; text-align: center; font-size: 0.9rem; }
   #debug { margin: 0; text-align: center; font: 0.85rem ui-monospace, monospace; }
   .buttons { display: flex; gap: 12px; }
   .buttons button { flex: 1; }
@@ -70,6 +71,7 @@
     <canvas id="view"></canvas>
     <div id="bar"><div></div></div>
     <p id="debug" hidden></p>
+    <p id="lockHint" hidden>Turn off auto-lock so the screen stays on.</p>
     <div class="buttons">
       <button id="recalBtn">Recalibrate</button>
       <button id="stopBtn">Stop</button>
