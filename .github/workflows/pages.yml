@@ -26,9 +26,21 @@ jobs:
         with:
           node-version: 22
       - run: node web/test_drowsy.mjs
+      - run: node web-landmarks/test_ear.mjs
+      # Site layout mirrors the repo, so stage 3 can import ../web/drowsy.js; the root opens stage 3
+      - run: |
+          mkdir site
+          cp -r web web-landmarks site/
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <meta http-equiv="refresh" content="0; url=web-landmarks/">
+          <title>Drowsiness Alert</title>
+          <a href="web-landmarks/">Open Drowsiness Alert</a>
+          HTML
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: web
+          path: site
       - id: deployment
         uses: actions/deploy-pages@v4

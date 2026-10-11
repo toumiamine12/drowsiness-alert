@@ -5,21 +5,24 @@
 A drowsiness detector that watches your eyes through a camera. If they stay closed too long, it flashes a red
 **WAKE UP!** screen and beeps until you open them.
 
-This repo shows one project in two stages:
+This repo shows one project in three stages, from a university module to an app drivers can use:
 
-| | Stage 1: Desktop | Stage 2: Phone web app |
-|---|---|---|
-| Purpose | University module project (BVA, image processing) | Real-life use for drivers whose car has no drowsiness warning |
-| Runs on | Linux laptop with a webcam | Any phone browser (iPhone Safari, Android Chrome), from a link |
-| Code | C++17 + OpenCV, in [`src/`](src) | JavaScript + OpenCV.js, in [`web/`](web) |
-| Try it | build it (see below) | **https://toumiamine12.github.io/drowsiness-alert/** |
+| | Stage 1: Desktop | Stage 2: Phone, classic CV | Stage 3: Phone, face landmarks |
+|---|---|---|---|
+| Purpose | University module project (BVA, image processing) | Bring the module project to drivers whose car has no drowsiness warning | Fix stage 2's accuracy problem for real use |
+| Runs on | Linux laptop with a webcam | Any phone browser, from a link | Any phone browser, from a link |
+| Method | Haar cascades + dark-pixel thresholding | same as stage 1, in OpenCV.js | MediaPipe face landmarks + Eye Aspect Ratio |
+| Code | C++17 + OpenCV, in [`src/`](src) | JavaScript, in [`web/`](web) | JavaScript, in [`web-landmarks/`](web-landmarks) |
+| Try it | build it (see below) | [/web/](https://toumiamine12.github.io/drowsiness-alert/web/) | **https://toumiamine12.github.io/drowsiness-alert/** |
 
-Both stages use the same classic computer-vision pipeline, with no neural networks: Haar cascades, region of
+Stages 1 and 2 use only classic computer vision from the module, with no neural networks: Haar cascades, region of
 interest, histogram equalization, thresholding and temporal filtering. A short calibration adapts the threshold to
-the user's own eyes, so it works for any eye color, lighting or glasses. Stage 2 takes the module project out of the
-lab: the same algorithm, adapted to phone cameras, varying frame rates and a moving car.
+the user's own eyes, so it works for any eye color, lighting or glasses. Stage 2 took that algorithm out of the lab
+and onto phones in moving cars, where **its accuracy wasn't good enough**: it was very sensitive, and even a slightly
+tilted phone broke it. **Stage 3 therefore uses MediaPipe for more accuracy**, while keeping the calibration, the
+temporal filter and the whole app from stage 2.
 
-## BVA topics used (both stages)
+## BVA topics used (stages 1 and 2; stage 3 keeps calibration and temporal filtering)
 
 | Topic | Where |
 |---|---|
@@ -132,8 +135,8 @@ Tuning constants (frames to alert, pixel threshold, calibration time) are at the
 
 ### How to use it
 
-1. Open **https://toumiamine12.github.io/drowsiness-alert/** on your phone. Optional: *Add to Home Screen*, so it
-   opens full screen like an app.
+1. Open **https://toumiamine12.github.io/drowsiness-alert/web/** on your phone. (The main link now opens stage 3.)
+   Optional: *Add to Home Screen*, so it opens full screen like an app.
 2. Mount the phone on the dashboard, with the front camera facing you.
 3. Tap **Start**, allow the camera, and look at it with your eyes open for 3 s while it calibrates.
 4. Drive. The whole screen is the state color: green AWAKE, orange EYES CLOSED, flashing red WAKE UP! with a rapid
@@ -161,7 +164,7 @@ node web/test_drowsy.mjs
 ```
 
 It runs in CI before every deploy ([`.github/workflows/pages.yml`](.github/workflows/pages.yml)). To run the app
-locally: `python3 -m http.server -d web 8000`, then open `http://localhost:8000`.
+locally: `python3 -m http.server 8000` in the repo root, then open `http://localhost:8000/web/`.
 [`web/opencv.js`](web/opencv.js) is the official OpenCV.js 4.9.0 build, self-hosted.
 
 ### Stage 2 limitations
@@ -172,3 +175,56 @@ locally: `python3 -m http.server -d web 8000`, then open `http://localhost:8000`
 - **iPhone can't vibrate** from a web page. The beep still plays.
 - **Head turned (mirrors, shoulder check):** the face is lost and the timer is held, not reset, so a check doesn't
   trigger an alert.
+- **Accuracy (the reason for stage 3):** see below.
+
+## Stage 3: Face landmarks (MediaPipe)
+
+### The accuracy problem we had
+
+Testing stage 2 on a real phone showed that **it wasn't accurate enough**: it was very sensitive, and tilting the phone
+even a tiny bit made it fail. Two fixes within classic CV solved real problems but not this one:
+
+1. **The two-resolution eye ROI** fixed eyes that were too small for the eye cascade when the phone was far away.
+2. **The relative dark threshold** fixed the dark ratio that equalization had made useless.
+
+A debug view (eyes found, dark ratio, which signal said "closed") then showed the actual cause. **Haar cascades are
+trained on upright, frontal faces and eyes, and only tolerate roughly ±10–15° of rotation.** A tilted phone mount,
+road bumps or a tilted head push the eyes outside that range. The eye cascade then misses open eyes, and "no eyes
+found" is read as "eyes closed". That's a limit of the method, not something more tuning could fix.
+
+### So we used MediaPipe for more accuracy
+
+Stage 3 replaces the Haar cascades with **MediaPipe Face Landmarker**, which finds 478 points on the face every frame,
+and computes the **Eye Aspect Ratio** (Soukupová & Čech, 2016) from 6 points around each eye:
+
+```
+        p2   p3
+  p1 ─────────── p4        EAR = (|p2 − p6| + |p3 − p5|) / (2 · |p1 − p4|)
+        p6   p5
+```
+
+- Open eyes give about 0.3, closed eyes about 0.05–0.1.
+- EAR is a ratio of distances, so **tilt, distance and face size cancel out**. The test
+  [`web-landmarks/test_ear.mjs`](web-landmarks/test_ear.mjs) checks exactly that: an eye rotated by 30° or −45°, or
+  scaled ×3, gives the same EAR.
+- The landmark finder is a small neural network, so it goes beyond the module topics. Everything around it is
+  unchanged from stage 2:
+  - calibration (threshold = 0.6 × your median open-eye EAR)
+  - the 800 ms temporal filter, including the head-drop rule
+  - TOO DARK
+  - the alarm, the screen-awake lock and the whole UI
+
+The shared logic is imported from [`web/drowsy.js`](web/drowsy.js), not copied. MediaPipe Tasks Vision 1.0.1 and the
+face model are self-hosted in [`web-landmarks/mediapipe/`](web-landmarks/mediapipe) (Apache-2.0), so the app doesn't
+depend on a third-party CDN while you drive.
+
+```bash
+node web-landmarks/test_ear.mjs
+```
+
+### Stage 3 limitations
+
+- **Looking far down lowers EAR.** Calibrate in your normal driving pose, with the phone where it will stay.
+- **It needs light on your face.** In the dark it shows TOO DARK, the same as stage 2.
+- **A strongly turned head foreshortens one eye.** EAR is averaged over both eyes, which absorbs most of this.
+- Foreground only, and no vibration on iPhone, the same as stage 2.
