@@ -29,10 +29,24 @@ function blinksNeverAlert() {
 function heldTimerDoesNotAccumulate() {
     const t = new ClosedTimer(800);
     t.update(true, 0);
-    t.update(true, 500);
-    t.hold(5000);  // e.g. face lost for 4.5 s
+    t.update(true, 200);  // a blink, below the head-drop threshold
+    t.hold(5000);  // e.g. face lost for 4.8 s
     assert.equal(t.update(true, 5100), false);
-    assert.equal(t.closedMs(), 600);
+    assert.equal(t.closedMs(), 300);
+}
+
+function headDropWhileClosingAlerts() {
+    const t = new ClosedTimer(800);
+    for (let now = 0; now <= 400; now += 100) t.update(true, now);  // eyes closing for 400 ms
+    assert.equal(t.hold(600), false);  // face lost (head dropping): time keeps counting
+    assert.equal(t.hold(800), true);
+}
+
+function blinkThenFaceLostDoesNotAlert() {
+    const t = new ClosedTimer(800);
+    t.update(true, 0);
+    t.update(true, 100);  // a blink: closed 100 ms
+    for (let now = 200; now <= 5000; now += 100) assert.equal(t.hold(now), false);  // e.g. shoulder check
 }
 
 function backwardsTimeIgnored() {
@@ -59,6 +73,8 @@ noAlertAt799ms();
 openFrameResets();
 blinksNeverAlert();
 heldTimerDoesNotAccumulate();
+headDropWhileClosingAlerts();
+blinkThenFaceLostDoesNotAlert();
 backwardsTimeIgnored();
 darkRatioCounts();
 calibratedThresholdMedian();

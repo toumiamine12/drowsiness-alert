@@ -2,11 +2,14 @@
 
 // Temporal filter: alert once the eyes have been closed for `ms` in a row.
 // Time-based instead of the desktop's frame count, because phone frame rates vary.
-// Closed time is summed frame by frame, so time spent in hold() (no face, too dark)
-// never counts, and a timestamp going backwards adds nothing.
+// Closed time is summed frame by frame, so a timestamp going backwards adds nothing.
+// hold() is for frames without a face (or too dark): that time doesn't count, unless the
+// eyes were already closing for >= headDropMs. A dozing driver's head drops and the face is
+// lost, so that time must keep counting; a blink followed by a mirror check must not.
 export class ClosedTimer {
-    constructor(ms) {
+    constructor(ms, headDropMs = 300) {
         this.ms = ms;
+        this.headDropMs = headDropMs;
         this.reset();
     }
 
@@ -18,7 +21,9 @@ export class ClosedTimer {
     }
 
     hold(nowMs) {
+        if (this.acc >= this.headDropMs) return this.update(true, nowMs);
         this.last = nowMs;
+        return false;
     }
 
     closedMs() {

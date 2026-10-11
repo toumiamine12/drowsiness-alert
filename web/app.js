@@ -75,6 +75,12 @@ function setupAudio() {
     gain.gain.value = 0;
     osc.connect(gain).connect(audio.destination);
     osc.start();
+    audio.addEventListener("statechange", showSoundButton);
+}
+
+// iOS suspends audio during a phone call and may refuse to resume it without a tap.
+function showSoundButton() {
+    $("soundBtn").hidden = !running || audio.state === "running";
 }
 
 function startAlarm() {
@@ -114,6 +120,8 @@ async function requestWakeLock() {
 // ---------- Start / stop ----------
 
 async function start() {
+    if (stream || $("startBtn").disabled) return;  // a double tap must not open two cameras
+    $("startBtn").disabled = true;
     $("error").hidden = true;
     setupAudio();  // must happen inside the tap, before any await
     try {
@@ -124,11 +132,25 @@ async function start() {
     } catch (e) {
         showError(e.name === "NotAllowedError"
             ? "Camera blocked: allow camera access for this site in your browser settings, then tap Start again."
+            : e.name === "NotReadableError"
+            ? "The camera is in use by another app. Close it, then tap Start again."
             : "No camera found.");
+        $("startBtn").disabled = false;
         return;
     }
+    // #2: camera taken away (other app, hardware) -> back to start with a reason, not a frozen screen
+    stream.getVideoTracks()[0].addEventListener("ended", () => {
+        stop();
+        showError("The camera stopped (another app may be using it). Tap Start to continue.");
+    });
     video.srcObject = stream;
-    await video.play();
+    try {
+        await video.play();
+    } catch {
+        stop();
+        showError("Couldn't start the camera preview. Tap Start to try again.");
+        return;
+    }
     $("start").hidden = true;
     $("drive").hidden = false;
     running = true;
@@ -148,6 +170,8 @@ function stop() {
     document.body.style.backgroundColor = "";
     $("drive").hidden = true;
     $("start").hidden = false;
+    $("soundBtn").hidden = true;
+    $("startBtn").disabled = false;
 }
 
 function startCalibration() {
@@ -162,12 +186,16 @@ function startCalibration() {
 
 function loop(now) {
     if (!running) return;
+    requestAnimationFrame(loop);  // first, so one bad frame can't stop detection
     // Only process new camera frames; the screen refreshes faster than the camera on most phones
     if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
         lastVideoTime = video.currentTime;
-        processFrame(now);
+        try {
+            processFrame(now);
+        } catch (e) {
+            console.error("frame skipped:", e);
+        }
     }
-    requestAnimationFrame(loop);
 }
 
 function processFrame(now) {
@@ -230,7 +258,8 @@ function processFrame(now) {
     } else if (face) {
         alert = timer.update(eyes.length === 0 || ratio < thr, now);
     } else {
-        timer.hold(now);  // no face / too dark: neither count up nor reset
+        // No face / too dark: held, unless the eyes were already closing (head dropping)
+        if (timer.hold(now)) alert = true;
     }
 
     if (lastFrame) fps = fps ? 0.9 * fps + 0.1 * (1000 / (now - lastFrame)) : 1000 / (now - lastFrame);
@@ -284,6 +313,7 @@ $("stopBtn").addEventListener("click", stop);
 $("recalBtn").addEventListener("click", startCalibration);
 $("label").addEventListener("click", () => (debug = !debug));
 $("retryBtn").addEventListener("click", () => location.reload());
+$("soundBtn").addEventListener("click", () => audio.resume().finally(showSoundButton));
 
 // The browser pauses the camera loop when the page is hidden: silence the alarm, and on return
 // pick up again (the wake lock is released automatically when hidden).
@@ -294,7 +324,8 @@ document.addEventListener("visibilitychange", () => {
         timer.reset();
         alert = false;
     } else {
-        audio.resume();
+        video.play().catch(() => {});  // iOS can leave the preview paused after a call
+        audio.resume().catch(() => {}).finally(showSoundButton);
         requestWakeLock();
     }
 });
