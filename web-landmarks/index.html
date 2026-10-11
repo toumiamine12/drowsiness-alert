@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111111">
+<title>Drowsiness Alert</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg">
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: #111; color: #fff;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-tap-highlight-color: transparent; user-select: none;
+    transition: background-color 0.2s;
+  }
+  button {
+    font: inherit; font-size: 1.2rem; font-weight: 600; color: #fff;
+    min-height: 56px; padding: 0 24px; border: 0; border-radius: 14px;
+    background: rgba(255, 255, 255, 0.18); touch-action: manipulation;
+  }
+  button:disabled { opacity: 0.5; }
+  button.primary { background: #1c6ed6; width: 100%; font-size: 1.4rem; min-height: 64px; }
+  .screen {
+    display: flex; flex-direction: column; height: 100%;
+    padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+  }
+  [hidden] { display: none !important; }
+
+  /* Start screen */
+  #start { justify-content: center; gap: 20px; max-width: 480px; margin: 0 auto; }
+  #start h1 { margin: 0; font-size: 2rem; }
+  #start p { margin: 0; line-height: 1.45; color: #ccc; }
+  #start .safety { color: #ffcf66; font-size: 0.95rem; }
+  #error { color: #ff8080; }
+
+  /* Driving screen: the whole background is the state color */
+  #drive { gap: 12px; }
+  #label { margin: 0; font-size: clamp(2.2rem, 11vw, 4rem); font-weight: 800; text-align: center; }
+  #hint { margin: 0; text-align: center; font-size: 1rem; min-height: 1.2em; }
+  #view {
+    flex: 1; min-height: 0; width: 100%; object-fit: contain;
+    transform: scaleX(-1); opacity: 0.55; border-radius: 14px;
+  }
+  #bar { height: 14px; border-radius: 7px; background: rgba(0, 0, 0, 0.35); overflow: hidden; }
+  #bar > div { height: 100%; width: 0; background: #fff; }
+  #lockHint { margin: 0; text-align: center; font-size: 0.9rem; }
+  #debug { margin: 0; text-align: center; font: 0.85rem ui-monospace, monospace; }
+  .buttons { display: flex; gap: 12px; }
+  .buttons button { flex: 1; }
+
+  body.alert { animation: flash 0.6s steps(1) infinite; }
+  @keyframes flash { 50% { background-color: #700000; } }
+</style>
+</head>
+<body>
+  <section id="start" class="screen">
+    <h1>Drowsiness Alert</h1>
+    <p>Mount your phone facing you. If your eyes stay closed for about a second, the phone beeps until you open them.</p>
+    <p class="safety">Assistive only. Mount the phone, don't touch it while driving, stop and rest when tired.</p>
+    <p id="error" hidden></p>
+    <button id="startBtn" class="primary" disabled>Loading…</button>
+    <button id="retryBtn" hidden>Retry</button>
+  </section>
+
+  <section id="drive" class="screen" hidden>
+    <h2 id="label">CALIBRATING</h2>
+    <p id="hint"></p>
+    <canvas id="view"></canvas>
+    <div id="bar"><div></div></div>
+    <p id="debug" hidden></p>
+    <button id="soundBtn" hidden>Tap to turn the alarm sound back on</button>
+    <p id="lockHint" hidden>Turn off auto-lock so the screen stays on.</p>
+    <div class="buttons">
+      <button id="recalBtn">Recalibrate</button>
+      <button id="stopBtn">Stop</button>
+    </div>
+  </section>
+
+  <video id="video" playsinline muted autoplay hidden></video>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

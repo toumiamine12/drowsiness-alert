@@ -1,0 +1,10 @@
+{
+  "name": "Drowsiness Alert",
+  "short_name": "Drowsy Alert",
+  "start_url": ".",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
