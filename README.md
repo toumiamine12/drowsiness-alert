@@ -2,14 +2,36 @@
 
 <!-- ![demo](docs/demo.gif) -->
 
-Real-time webcam drowsiness detector in C++17 and OpenCV. If your eyes stay closed for about half a second,
-the app flashes a red **WAKE UP!** banner and plays a loud, rapid beep until you open them again.
+A drowsiness detector that watches your eyes through a camera. If they stay closed too long, it flashes a red
+**WAKE UP!** screen and beeps until you open them.
 
-It uses classic computer vision only, with no neural networks: Haar cascades, region of interest, histogram
-equalization, thresholding and temporal filtering. A short calibration adapts the threshold to the user's own
-eyes, so it works for any eye color, lighting or glasses.
+This repo shows one project in two stages:
 
-## Features
+| | Stage 1: Desktop | Stage 2: Phone web app |
+|---|---|---|
+| Purpose | University module project (BVA, image processing) | Real-life use for drivers whose car has no drowsiness warning |
+| Runs on | Linux laptop with a webcam | Any phone browser (iPhone Safari, Android Chrome), from a link |
+| Code | C++17 + OpenCV, in [`src/`](src) | JavaScript + OpenCV.js, in [`web/`](web) |
+| Try it | build it (see below) | **https://toumiamine12.github.io/drowsiness-alert/** |
+
+Both stages use the same classic computer-vision pipeline, with no neural networks: Haar cascades, region of
+interest, histogram equalization, thresholding and temporal filtering. A short calibration adapts the threshold to
+the user's own eyes, so it works for any eye color, lighting or glasses. Stage 2 takes the module project out of the
+lab: the same algorithm, adapted to phone cameras, varying frame rates and a moving car.
+
+## BVA topics used (both stages)
+
+| Topic | Where |
+|---|---|
+| Haar cascades / sliding-window detection | face and eye `detectMultiScale` in [`src/main.cpp`](src/main.cpp) and [`web/app.js`](web/app.js) |
+| Region of interest (ROI) | eyes are searched only in the upper half of the face; the eye band for thresholding |
+| Histogram equalization | `equalizeHist` on the gray frame before detection |
+| Thresholding | `darkRatio()` in [`src/drowsy.cpp`](src/drowsy.cpp) / [`web/drowsy.js`](web/drowsy.js): fixed gray-level threshold → dark-pixel ratio |
+| Temporal filtering | `ClosedCounter` (desktop: 15 closed frames in a row) / `ClosedTimer` (phone: closed ≥ 800 ms) → alert |
+
+## Stage 1: Desktop (C++)
+
+### Features
 
 - Live face and eye detection at webcam frame rate on a standard laptop CPU
 - Two "eyes closed" signals: the eye cascade finds no eyes, **or** the dark-pixel ratio of the eye band drops
@@ -20,7 +42,7 @@ eyes, so it works for any eye color, lighting or glasses.
 - Clickable toolbar to switch cameras (also lists phone webcams such as Iriun), recalibrate, toggle debug, or quit
 - Debug view: equalized image, eye ROI, thresholded eye band, and the live ratio and threshold
 
-## Pipeline
+### Pipeline
 
 ```
 webcam frame (BGR)
@@ -37,17 +59,7 @@ webcam frame (BGR)
 
 If no face is found, the counter is held (it neither counts up nor resets), so looking away doesn't fire the alarm.
 
-## BVA topics used
-
-| Topic | Where |
-|---|---|
-| Haar cascades / sliding-window detection | face and eye `detectMultiScale` in [`src/main.cpp`](src/main.cpp) |
-| Region of interest (ROI) | eyes are searched only in the upper half of the face; the eye band for thresholding |
-| Histogram equalization | `equalizeHist` on the gray frame before detection |
-| Thresholding | `darkRatio()` in [`src/drowsy.cpp`](src/drowsy.cpp): fixed gray-level threshold → dark-pixel ratio |
-| Temporal filtering | `ClosedCounter`: N consecutive closed frames → alert |
-
-## Design notes
+### Design notes
 
 - **Why calibrate?** A fixed ratio threshold fails across people. A light iris (blue, green) gives fewer dark
   pixels than a brown one, but the pupil, lashes and lid line stay dark. The threshold is therefore set to 60 % of
@@ -57,7 +69,7 @@ If no face is found, the counter is held (it neither counts up nor resets), so l
 - **Why OR the two signals?** The eye cascade alone sometimes still fires on closed eyes, and the ratio alone is
   sensitive to lighting. OR catches both. The 15-frame filter absorbs the extra single-frame false positives.
 
-## Tests
+### Tests
 
 `tests/test_drowsy.cpp` checks the logic on synthetic data, with no webcam needed:
 
@@ -69,7 +81,7 @@ If no face is found, the counter is held (it neither counts up nor resets), so l
 ctest --test-dir build --output-on-failure
 ```
 
-## Build & run
+### Build & run
 
 **Fedora**
 
@@ -106,10 +118,56 @@ Look at the camera with your eyes open while the blue calibration bar fills (3 s
 
 Tuning constants (frames to alert, pixel threshold, calibration time) are at the top of [`src/main.cpp`](src/main.cpp).
 
-## Known limitations
+### Known limitations
 
 - **Frontal face only:** the Haar face cascade loses the face when the head turns or tilts strongly. The counter is
   then held, not reset.
 - **Strong backlight or very dark rooms** reduce contrast in the eye band. Recalibrate (`c`) after the light changes.
 - **Glasses with strong reflections** can hide the eyes from the cascade. Calibration absorbs part of this.
-- **Not a safety device.** This is a module project, not something to rely on while driving.
+- **Not meant for driving.** Stage 2 is the version built for the car.
+
+## Stage 2: Phone web app
+
+**Assistive only. Mount the phone, don't touch it while driving, stop and rest when tired.**
+
+### How to use it
+
+1. Open **https://toumiamine12.github.io/drowsiness-alert/** on your phone. Optional: *Add to Home Screen*, so it
+   opens full screen like an app.
+2. Mount the phone on the dashboard, with the front camera facing you.
+3. Tap **Start**, allow the camera, and look at it with your eyes open for 3 s while it calibrates.
+4. Drive. The whole screen is the state color: green AWAKE, orange EYES CLOSED, flashing red WAKE UP! with a rapid
+   beep (and vibration on Android).
+
+Keep the app on screen: phones don't allow camera access in the background, and the screen is kept awake while it runs.
+Tap the state label to show the debug line (dark ratio, threshold, fps).
+
+### What changed from stage 1, and why
+
+| Stage 1 (desktop) | Stage 2 (phone) | Why |
+|---|---|---|
+| `ClosedCounter`: 15 consecutive frames | `ClosedTimer`: closed ≥ 800 ms | phone frame rates vary; this is still temporal filtering |
+| full 640×480 frame | downscaled to 320 px wide | keeps ≥ 15 fps on phone CPUs |
+| — | TOO DARK state when mean gray < 40 | at night, classic CV can't see the face, so it says so instead of failing silently |
+| — | Screen Wake Lock | the phone must not lock while driving |
+| `paplay` WAV | Web Audio square wave, plus vibration on Android | no audio files; plays even with the iPhone ringer switch on silent |
+| keyboard + toolbar | big touch buttons, a full-screen state color | readable at a glance, no precise taps needed |
+
+The pure logic ([`web/drowsy.js`](web/drowsy.js)) mirrors [`src/drowsy.cpp`](src/drowsy.cpp) and has its own self-check:
+
+```bash
+node web/test_drowsy.mjs
+```
+
+It runs in CI before every deploy ([`.github/workflows/pages.yml`](.github/workflows/pages.yml)). To run the app
+locally: `python3 -m http.server -d web 8000`, then open `http://localhost:8000`.
+[`web/opencv.js`](web/opencv.js) is the official OpenCV.js 4.9.0 build, self-hosted.
+
+### Stage 2 limitations
+
+- **Foreground only:** iOS and Android stop the camera when the page is hidden or the screen locks. The alarm stops
+  too, and detection resumes when you come back.
+- **Night driving:** without light on your face, classic CV can't find it, and the app shows TOO DARK.
+- **iPhone can't vibrate** from a web page. The beep still plays.
+- **Head turned (mirrors, shoulder check):** the face is lost and the timer is held, not reset, so a check doesn't
+  trigger an alert.
